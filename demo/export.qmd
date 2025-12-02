@@ -1,0 +1,68 @@
+---
+title: audio output embedding
+format: html
+---
+
+
+
+```{r}
+library(av)
+source("../rpkg/R/export.R")
+```
+
+
+
+```{r}
+adata <- read_audio_bin("~/audio-samples/rabindranath-birpurush.mp3", channels = 1)
+srate <- attr(adata, "sample_rate")
+MAX <- 2^31 - 1
+adata <- adata / MAX
+bdata <- adata + rnorm(length(adata), mean = 0, sd = 0.01)
+
+plot(adata[(1:100) + 765656], type = "o")
+plot(bdata[(1:100) + 765656], type = "o")
+
+outfile <- "bdata.mp3"
+writeSignal(bdata, file = outfile, samp.rate = srate)
+```
+
+
+Show as embedded audio in HTML
+
+
+```{r}
+#| output: asis
+writeAudioBlock(outfile)
+```
+
+
+
+## sinusoidal curves
+
+
+```{r}
+makeSinCurve <-
+    function(duration = 1,
+             freq = 261.63,
+             samp.rate = 44100,
+             amplitude = 1)
+{
+    tt <- seq(0, duration, length.out = duration * samp.rate)
+    amplitude * sin(2 * pi * freq * tt)
+}
+```
+
+
+```{r}
+cc <- makeSinCurve(5, freq = 2^8)
+dd <- makeSinCurve(5, freq = 2^(8 + 1/12))
+outfile <- "sincomb.mp3"
+writeSignal(0.5 * (cc + dd), file = outfile)
+```
+
+```{r}
+#| output: asis
+writeAudioBlock(outfile)
+```
+
+
