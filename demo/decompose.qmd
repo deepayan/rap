@@ -1,0 +1,189 @@
+---
+title: Successive high-pass decomposition by smoothing
+format: html
+execute:
+  cache: true
+---
+
+
+Follow up of ridge-type regularization in test.R
+
+Can we decompose a signal into a low-frequency part, then decompose
+the low-frequency part again, and so on?
+
+
+```{r}
+library(av)
+library(rap)
+filterLP <- function(x, lambda = 20)
+{
+    ## Possible alternative transformations
+    ## fftTrans <- transform.fft(delta = 4000, modulus.only = FALSE)
+    ## ridgeTrans <- transform.ridge(filter = c(1, -2, 1), lambda = 500)
+    ridgeTrans <- transform.ridge(filter = c(1, -1), lambda = 20)
+    m <- splitSignal(x, 1024, 512)
+    xx <- transformSignal(m, ridgeTrans, loop = FALSE) |> mergeSignal(overlap = 512)
+    ## FIXME: some problem in calculation; xx longer
+    L <- min(length(x), length(xx))
+    x <- x[1:L]
+    xx <- xx[1:L]
+    xx
+}
+LAMBDA <- 20
+```
+
+
+```{r}
+src <- "../samples/rabindranath-jhulan-1939.wav"
+## "../samples/nayan_chhere_gele_chale.wav"
+x <- read_audio_bin(src, channels = 1) |> scaleSignal()
+(srate <- attr(x, "sample_rate"))
+```
+
+## Original
+
+```{r}
+outfile <- "component-original.mp3"
+writeSignal(scaleSignal(x), file = outfile, samp.rate = srate)
+```
+
+```{r}
+#| output: asis
+writeAudioBlock(outfile)
+```
+
+
+## Decompose successively
+
+But in the next stage should we decompose the smoothed (low-frequency)
+component or the residual (high-frequency) component?
+
+It seems that with this choice of `lambda`, the residual contains the
+more interesting part of the signal, so that's the component we
+decompose further.
+
+```{r}
+x1 <- filterLP(x, lambda = LAMBDA)
+r1 <- x - x1 # x = x1 + r1
+x2 <- filterLP(r1, lambda = LAMBDA)
+r2 <- r1 - x2 # r1 = x2 + r2 => x = x1 + x2 + r2 
+x3 <- filterLP(r2, lambda = LAMBDA)
+r3 <- r2 - x3 # r2 = x3 + r3 => x = x1 + x2 + x3 + r3 
+x4 <- filterLP(r3, lambda = LAMBDA)
+r4 <- r3 - x4 # r3 = x4 + r4 => x = x1 + x2 + x3 + x4 + r4 
+## so x = (x - r1) + (r1 - r2) + (r2 - r3) + (r3 - r4) + r4
+```
+
+
+
+```{r}
+outfile <- "component-1.mp3"
+writeSignal(scaleSignal(x1), file = outfile, samp.rate = srate)
+```
+
+```{r}
+#| output: asis
+writeAudioBlock(outfile)
+```
+
+
+```{r}
+outfile <- "component-2.mp3"
+writeSignal(scaleSignal(x2), file = outfile, samp.rate = srate)
+```
+
+```{r}
+#| output: asis
+writeAudioBlock(outfile)
+```
+
+
+```{r}
+outfile <- "component-3.mp3"
+writeSignal(scaleSignal(x3), file = outfile, samp.rate = srate)
+```
+
+```{r}
+#| output: asis
+writeAudioBlock(outfile)
+```
+
+
+```{r}
+outfile <- "component-4.mp3"
+writeSignal(scaleSignal(x4), file = outfile, samp.rate = srate)
+```
+
+```{r}
+#| output: asis
+writeAudioBlock(outfile)
+```
+
+
+```{r}
+outfile <- "component-residual.mp3"
+writeSignal(scaleSignal(r4), file = outfile, samp.rate = srate)
+```
+
+```{r}
+#| output: asis
+writeAudioBlock(outfile)
+```
+
+
+
+## Re-mix
+
+Finally, we drop the lowest and highest frequency components (`x1` and
+`r4`), and then recombine, but after scaling each component
+individually.
+
+
+```{r}
+xmix <- (0.5 * scaleSignal(x2) + 0.5 * scaleSignal(x3))
+outfile <- "component-remixed.mp3"
+writeSignal(scaleSignal(xmix), file = outfile, samp.rate = srate)
+```
+
+```{r}
+#| output: asis
+writeAudioBlock(outfile)
+```
+
+## ACF and PACF
+
+Not sure how to interpret these, 
+
+
+```{r}
+acf(x, lag.max = 100)
+acf(x2, lag.max = 100)
+pacf(x, lag.max = 100)
+pacf(x2, lag.max = 100)
+```
+
+
+## FFT visualization
+
+```{r}
+m <- splitSignal(x, 1024, 512)
+tmp <- mvfft(m) / sqrt(nrow(m))
+lattice::levelplot(t(log(Mod(tmp))), aspect = "fill", col.regions = hcl.colors)
+```
+
+## Spectrum
+
+```{r}
+system.time(
+mspec <- transformSignal(m,
+                         function(x) {
+                             s <- spectrum(x, plot = FALSE, method = "ar") # "pgram"
+                             s$spec
+                         },
+                         loop = TRUE) # loop=TRUE is actually faster
+                                      # because less things are
+                                      # calculated
+)
+lattice::levelplot(log(mspec), aspect = "fill", col.regions = hcl.colors)
+```
+
