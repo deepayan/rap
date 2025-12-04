@@ -1,0 +1,338 @@
+---
+title: AR modeling or Linear Predictive Coding
+format: html
+execute:
+  cache: true
+---
+
+
+After many blind ends, things boil down to this:
+
+- LPC or AR is a good generative model for speech:
+  https://en.wikipedia.org/wiki/Linear_prediction
+
+- We thus need to estimate the AR coefficients from an input signal
+
+- The Durbin-Levinson algorithm does this from the ACF
+
+- This is a Good Thing because the ACF looks like it might be amenable
+  to modeling
+
+- The drawback is causality --- not robust to small changes --- for
+  which PACF might be better behaved if we can figure out how to use
+  it.
+
+
+
+```{r}
+library(av)
+library(rap)
+src <- "../samples/rabindranath-jhulan-1921.wav"
+## "../samples/nayan_chhere_gele_chale.wav"
+x <- read_audio_bin(src, channels = 1) |> scaleSignal()
+(srate <- attr(x, "sample_rate"))
+x <- head(x, srate * 20) # 20 seconds
+m <- splitSignal(x, patch = 1024, overlap = 0) # 1024 # ~ 23 milliseconds
+getACF <- function(x, ...)
+{
+    acf(x, ..., plot = FALSE, demean = FALSE)$acf[-1]
+}
+system.time(acf.coefmat <- apply(m, 2, getACF, lag.max = 300, type = "correlation"))
+system.time(pacf.coefmat <- apply(m, 2, getACF, lag.max = 300, type = "partial"))
+```
+
+
+```{r}
+matplot((acf.coefmat), type = "l", lty = 1, col = "#00000022")
+lattice::levelplot(t(acf.coefmat[, ]), aspect = "fill", col.regions = hcl.colors) 
+
+system.time(
+    ar.coefmat <- apply(acf.coefmat, 2, acf2ar, lambda = 0.005)
+)
+
+
+## system.time(
+##     ar.coefmat <- apply(acf.coefmat, 2, levinson.ma)
+## )
+## reconstruction explodes
+```
+
+
+```{r}
+recons.ar <- generateAR(ar.coefmat,
+                        innov.fun = rnorm, noise.sigma = 0.01)
+
+```
+
+```{r}
+outfile <- "generated-ar.coefmat.mp3"
+writeSignal(scaleSignal(recons.ar, qprob = 0.75), file = outfile, samp.rate = srate)
+```
+
+```{r}
+#| output: asis
+writeAudioBlock(outfile)
+```
+
+Doesn't seem to do anything --- may need parameter tuning.
+
+
+For comparison, direct estimation using `ar()` - in principle, can try
+to reproduce this if it is actually based on ACF.
+
+
+
+```{r}
+getARCoef <- function(x, ..., taper = FALSE)
+{
+    if (taper) x <- spec.taper(x, 0.5)
+    ## ar(x, aic = FALSE, order.max = order, demean = FALSE, method = "burg")$ar
+    ar(x, aic = FALSE, ..., demean = FALSE, method = "burg")$ar
+}
+
+system.time(
+    ar.burgmat <- apply(m, 2, getARCoef, order.max = 300)
+)
+
+recons.burg <- generateAR(ar.burgmat[,],
+                          innov.fun = rnorm, noise.sigma = 0.001)
+
+```
+
+```{r}
+outfile <- "generated-ar.burgmat.mp3"
+writeSignal(scaleSignal(recons.burg, qprob = 0.9), file = outfile, samp.rate = srate)
+```
+
+```{r}
+#| output: asis
+writeAudioBlock(outfile)
+```
+
+
+
+
+
+
+```r
+
+i <- sample(860, 1)
+xyplot(ar.burgmat[, i] ~ ar.coefmat[, i],
+       abline = c(0, 1), grid = TRUE, aspect = "iso",
+       prepanel = function(x, y) {
+           r <- quantile(c(x, y), c(0.01, 0.99))
+           list(xlim = r, ylim = r)
+       })
+
+## very different!
+
+levelplot(t(acf.coefmat[1:200, ]), aspect = "fill", col.regions = hcl.colors) 
+
+
+levelplot(t(asinh(ar.coefmat)[1:200, ]), aspect = "fill", col.regions = hcl.colors) 
+
+levelplot(t(asinh(ar.burgmat)[1:200, ]), aspect = "fill", col.regions = hcl.colors) 
+
+
+## The sensitivity to AR coefficients is discouraging, but let's try
+## at least a couple of things.
+
+## 1. Estimate ACF a little differently: fixed number of lagged-products,
+
+## 2. Replace ACFs by "smoothed" versions (maybe using splines)
+
+
+matplot((acf.coefmat), type = "l", lty = 1, col = "#00000022")
+
+
+library(splines)
+
+smoothacf <- function(x)
+{
+    i <- seq_along(x)
+    fm <- lm(x ~ bs(i, df = 30))
+    fitted(fm)
+}
+
+I <- sample(ncol(acf.coefmat), 1)
+plot(smoothacf(acf.coefmat[, I]), type = "l")
+lines(seq_len(nrow(acf.coefmat)), acf.coefmat[, I], col = 3)
+
+acf.smoothmat <- apply(acf.coefmat, 2, smoothacf)
+matplot((acf.smoothmat), type = "l", lty = 1, col = "#00000022")
+
+system.time(
+    ar.coefmat <- apply(acf.smoothmat, 2, acf2ar, lambda = 0)
+)
+
+
+for (i in seq_len(ncol(ar.coefmat)))
+{
+    m <- max(abs(ar.coefmat[,i]))
+    if (m > 2) ar.coefmat[-1,i] <- 0
+}
+
+
+matplot((ar.coefmat), type = "l", lty = 1, col = "#00000022")
+abline(h = 0)
+
+recons <- generateAR(ar.coefmat,
+                     innov.fun = noise, kind = "white", noise.sigma = 0.1)
+play(recons)
+
+plot(recons)
+
+## So this is a problem. Would it be enough to make sure that the
+## input ACF is positive definite?
+
+
+## Let's at least see if dimension reduction works in the sense that
+## "close" in regression coefficients  means close in ACF
+
+
+smoothCoef <- function(x)
+{
+    i <- seq_along(x)
+    fm <- lm(x ~ bs(i, df = 30))
+    ## coef(fm) / max(coef(fm))
+    log(abs(coef(fm)[-1])) - log(abs(coef(fm)[1]))
+}
+
+
+I <- sample(ncol(acf.coefmat), 1)
+smoothCoef(acf.coefmat[, I])
+
+acf.smoothcoef <- apply(acf.coefmat, 2, smoothCoef)
+matplot((acf.smoothcoef), type = "l", lty = 1, col = "#00000022")
+
+matplot(t(acf.smoothcoef), type = "l", lty = 1, col = "#00000099")
+
+str(acf.smoothcoef)
+
+## Euclidian distance from previous point
+
+d <- numeric(ncol(acf.smoothcoef))
+d[1] <- Inf
+for (i in 2:ncol(acf.smoothcoef))
+{
+    d[i] <- mean((acf.smoothcoef[, i] - acf.smoothcoef[, i-1])^2)
+}
+
+plot(d, type = "l")
+
+
+if (FALSE)
+{
+
+
+    ## other more explicit distances
+    ## m <- ar.coefmat
+    m <- ar.burgmat
+    d <- numeric(ncol(m))
+    d[1] <- Inf
+    for (i in 2:ncol(m))
+    {
+        d[i] <- mean((m[, i] - m[, i-1])^2)
+    }
+    plot(d, type = "l")
+
+}
+
+
+ar.simplemat <- ar.coefmat
+for (i in seq_along(d))
+{
+    if (d[i] < 0.01)
+    {
+        cat(".")
+        ar.simplemat[, i] <- ar.simplemat[, i-1]
+    }
+}
+
+
+
+recons <- generateAR(ar.simplemat,
+                     innov.fun = noise, kind = "white", noise.sigma = 0.1)
+play(recons)
+
+
+
+## What about eigenvalues of ACF matrix before and after
+## approximating? This should show whether the function is p.d.
+
+
+e1 <- apply(acf.coefmat, 2, smallestEigenvalue)
+
+acf.smoothcoef <- apply(acf.coefmat, 2, smoothacf)
+
+e2 <- apply(acf.smoothcoef, 2, smallestEigenvalue)
+
+
+acf.smoothmat <-
+    apply(acf.coefmat, 2,
+          function(x) {
+              s <- smoothacf(x)
+              e <- smallestEigenvalue(s, lambda = 0)
+              if (e < 0) s else x
+          })
+
+
+## does this at least lead to something reasonable?
+
+system.time(
+    ar.coefmat <- apply(acf.smoothmat, 2, acf2ar, lambda = 0)
+)
+
+recons <- generateAR(ar.coefmat,
+                     innov.fun = noise, kind = "white", noise.sigma = 0.1)
+
+plot(recons)
+play(recons)
+
+
+for (I in which(e2 > 0))
+{
+    plot(smoothacf(acf.coefmat[, I]), type = "l", main = e2[I])
+    lines(seq_len(nrow(acf.coefmat)), acf.coefmat[, I], col = 3)
+}
+
+## try to approximate by PD
+
+library(splines)
+
+smoothacf <- function(x)
+{
+    i <- seq_along(x)
+    fm <- lm(x ~ bs(i, df = 30))
+    fitted(fm)
+}
+
+
+acf.smoothmat <- apply(acf.coefmat, 2, smoothacf)
+
+acf.smoothpd <- apply(acf.smoothmat, 2, makePD)
+
+system.time(
+    ar.coefmat <- apply(acf.smoothpd, 2, acf2ar, lambda = 0)
+)
+
+recons <- generateAR(ar.coefmat,
+                     innov.fun = noise, kind = "white", noise.sigma = 0.1)
+
+plot(recons)
+play(recons)
+
+
+## Try solving as non-Toeplitz
+
+system.time(
+    ar.coefmat <- apply(acf.smoothmat, 2, acf2ar.pd, lambda = 0.01)
+)
+
+recons <- generateAR(ar.coefmat,
+                     innov.fun = noise, kind = "white", noise.sigma = 0.1)
+
+plot(recons)
+play(recons)
+
+```
