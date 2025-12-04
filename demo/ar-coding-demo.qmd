@@ -110,6 +110,24 @@ writeAudioBlock(outfile)
 ```
 
 
+## MA model --- use ACF as coefficients
+
+```{r}
+system.time(acf.mat800 <- apply(m, 2, getACF, lag.max = 800, type = "correlation"))
+recons.ma <- generateMA(acf.mat800, innov.fun = rnorm, noise.sigma = 0.01)
+```
+
+not good, but retains essence + a lot of noise 
+
+```{r}
+outfile <- "generated-ma.coefmat.mp3"
+writeSignal(scaleSignal(recons.ma, qprob = 0.9), file = outfile, samp.rate = srate)
+```
+
+```{r}
+#| output: asis
+writeAudioBlock(outfile)
+```
 
 
 
@@ -336,3 +354,5 @@ plot(recons)
 play(recons)
 
 ```
+
+

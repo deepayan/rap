@@ -3,6 +3,8 @@
 
 ## FIXME: replace hard-coded 1024 by argument.
 
+## See tuneR::noise() for other kinds of noise --- "white" is rnorm()
+
 generateAR <-
     function(arm, innov.fun = rnorm, ...,
              noise.sigma = 1,
@@ -30,8 +32,36 @@ generateAR <-
     }
     print(range(xx))
     xx[!is.finite(xx)] <- 0
-    scaleSignal(xx, qprob = 0.99)
+    xx
 }
+
+
+generateMA <-
+    function(arm, innov.fun, ..., noise.sigma = 1,
+             verbose = interactive())
+    ## arm: matrix of MA coefficients (despite the name)
+{
+    ORDER <- nrow(arm)
+    ## matplot(asinh(arm)[1:10, ], type = "l", lty = 1, col = "#00000022")
+    N <- 1024 * (1 + ncol(arm))
+    zz <- noise.sigma * innov.fun(N, ...)
+    xx <- zz
+    IND <- 1:ORDER
+    for (i in 1025:(N-1))
+    {
+        if (verbose && i %% 1000 == 0)
+            cat(sprintf("\r %d%%: %g              ",
+                        round(100 * i / (N-1)), xx[i]))
+        j <- i %/% 1024
+        rho <- arm[, j]
+        xx[i] <- sum(rho * zz[i - IND]) + zz[i]
+    }
+    print(range(xx))
+    xx[!is.finite(xx)] <- 0
+    xx
+}
+
+
 
 
 ## Unfortunately, there is no easily available implementation that
