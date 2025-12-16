@@ -38,9 +38,9 @@ getACF <- function(x, ...)
 ## Original audio
 
 ```{r}
-src <- "~/audio-samples/rabindranath-birpurush.mp3"
-## src <- "../samples/rabindranath-jhulan-1921.wav"
-## "../samples/nayan_chhere_gele_chale.wav"
+## src <- "~/audio-samples/rabindranath-birpurush.mp3"
+src <- ## "../samples/rabindranath-jhulan-1921.wav"
+    "../samples/nayan_chhere_gele_chale.wav"
 x <- read_audio_bin(src, channels = 1) |> scaleSignal()
 (srate <- attr(x, "sample_rate"))
 x <- head(x, srate * 60) |> tail(srate * 20) # 20 seconds
@@ -58,8 +58,8 @@ writeAudioBlock(outfile)
 
 ```{r}
 m <- splitSignal(x, patch = 1024, overlap = 512) # 1024 # ~ 23 milliseconds
-system.time(acf.coefmat <- apply(m, 2, getACF, lag.max = 600, type = "correlation"))
-system.time(pacf.coefmat <- apply(m, 2, getACF, lag.max = 600, type = "partial"))
+system.time(acf.coefmat <- apply(m, 2, getACF, lag.max = 400, type = "correlation"))
+system.time(pacf.coefmat <- apply(m, 2, getACF, lag.max = 400, type = "partial"))
 ```
 
 
@@ -74,10 +74,6 @@ system.time(
 )
 
 
-## system.time(
-##     ar.coefmat <- apply(acf.coefmat, 2, levinson.ma)
-## )
-## reconstruction explodes
 ```
 
 
@@ -112,7 +108,7 @@ getARCoef <- function(x, ..., taper = FALSE)
 }
 
 system.time(
-    ar.burgmat <- apply(m, 2, getARCoef, order.max = 600)
+    ar.burgmat <- apply(m, 2, getARCoef, order.max = 400)
 )
 
 recons.burg <- generateAR(ar.burgmat[,], PATCHSIZE = 512,
@@ -135,17 +131,14 @@ writeAudioBlock(outfile)
 
 ## AR from ACF using Levinson's algorithm 
 
+Not stable, but may be worth pursuing as this seems standard.
 
-```{r}
+```r
 library(gsignal)
-arcmat <- t(levinson(acf.coefmat, p = 600)$a)[-1, ]
-```
-
-```{r}
+arcmat <- t(levinson(acf.coefmat, p = 400)$a)[-1, ]
 recons.levinson.ar <-
     generateAR(arcmat[,], PATCHSIZE = 512,
                innov.fun = rnorm, noise.sigma = 0.001)
-
 ```
 
 
@@ -153,19 +146,22 @@ recons.levinson.ar <-
 
 ## MA model from ACF
 
-Not sure if this is correct.
+Not sure if this is correct. Maybe it's adapted from `signal::levinson`.
 
 
 
 ```{r}
-macmat <- apply(m, 2, levinson.ma, p = 600)
+system.time(
+    macmat <- apply(acf.coefmat, 2, levinson.ma)
+)
 ```
 
+But reconstruction explodes.
 
 
 ```{r}
 recons.levinson.ma <-
-    generateMA(arcmat[,], PATCHSIZE = 512,
+    generateMA(macmat[,], PATCHSIZE = 512,
                innov.fun = rnorm, noise.sigma = 0.005)
 
 ```
@@ -230,7 +226,7 @@ filterLP <- function(x, lambda = 20)
 
 ```{r}
 #| label: low-pass-filter
-x1 <- filterLP(recons.ma, lambda = 10)
+x1 <- filterLP(recons.ma, lambda = 5)
 ```
 
 
@@ -242,6 +238,78 @@ writeSignal(scaleSignal(x1), file = outfile, samp.rate = srate)
 ```{r}
 #| output: asis
 writeAudioBlock(outfile)
+```
+
+
+## Try to make MA estimation better
+
+Not simple, but let's try this silly algorithm:
+
+* Start with auto-correlations $\hat\rho$
+
+* Want to estimate MA coefficients $\theta$
+
+* Initialize $\hat\theta = \hat\rho$ (with $\theta_0 = 1$)
+
+* The defining relationship is
+
+$$
+\rho_k = \theta_k + \theta_1 \theta_{1+k} + \dotsm + \theta_{q-k} \theta_q
+$$
+
+* Using this, recursively update (for $k = 1, 2, \dotsc, q$)
+
+$$
+\theta_k = \hat\rho_k - (\theta_1 \theta_{1+k} + \dotsm + \theta_{q-k} \theta_q)
+$$
+
+
+```{r}
+sillyMA <- function(rho, q = length(rho), niter = 10)
+{
+    rho <- head(rho, q)
+    theta <- rho
+    updateTheta <- function() {
+        theta[] <<- rho - sapply(1:q, function(k) sum(head(theta, -k) * tail(theta, -k)))
+    }
+    replicate(niter, updateTheta())
+    theta
+}
+```
+
+
+```{r}
+#| label: silly-ma
+system.time(
+    silly.macmat <- apply(acf.coefmat, 2, sillyMA, q = 400, niter = 3)
+)
+str(silly.macmat)
+```
+
+
+
+```{r}
+#| label: gen-ma-2
+recons.sillyma <- generateMA(silly.macmat, PATCHSIZE = 512, 
+                         innov.fun = rnorm, noise.sigma = 0.001)
+```
+
+
+
+```{r}
+outfile <- "ma-silly.mp3"
+writeSignal(scaleSignal(recons.sillyma), file = outfile,  samp.rate = srate)
+```
+
+```{r}
+#| output: asis
+writeAudioBlock(outfile)
+```
+
+
+
+```{r}
+matplot((silly.macmat), type = "l", lty = 1,  col = "#00000022")
 ```
 
 
