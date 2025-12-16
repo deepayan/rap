@@ -25,21 +25,44 @@ After many blind ends, things boil down to this:
 
 
 ```{r}
+#| cache: false
 library(av)
 library(rap)
-src <- "../samples/rabindranath-jhulan-1921.wav"
-## "../samples/nayan_chhere_gele_chale.wav"
-x <- read_audio_bin(src, channels = 1) |> scaleSignal()
-(srate <- attr(x, "sample_rate"))
-x <- head(x, srate * 20) # 20 seconds
-m <- splitSignal(x, patch = 1024, overlap = 0) # 1024 # ~ 23 milliseconds
 getACF <- function(x, ...)
 {
     acf(x, ..., plot = FALSE, demean = FALSE)$acf[-1]
 }
-system.time(acf.coefmat <- apply(m, 2, getACF, lag.max = 300, type = "correlation"))
-system.time(pacf.coefmat <- apply(m, 2, getACF, lag.max = 300, type = "partial"))
 ```
+
+
+## Original audio
+
+```{r}
+src <- "~/audio-samples/rabindranath-birpurush.mp3"
+## src <- "../samples/rabindranath-jhulan-1921.wav"
+## "../samples/nayan_chhere_gele_chale.wav"
+x <- read_audio_bin(src, channels = 1) |> scaleSignal()
+(srate <- attr(x, "sample_rate"))
+x <- head(x, srate * 60) |> tail(srate * 20) # 20 seconds
+outfile <- "original-audio.mp3"
+writeSignal(scaleSignal(x), file = outfile, samp.rate = srate)
+```
+
+```{r}
+#| output: asis
+writeAudioBlock(outfile)
+```
+
+
+## ACF
+
+```{r}
+m <- splitSignal(x, patch = 1024, overlap = 512) # 1024 # ~ 23 milliseconds
+system.time(acf.coefmat <- apply(m, 2, getACF, lag.max = 600, type = "correlation"))
+system.time(pacf.coefmat <- apply(m, 2, getACF, lag.max = 600, type = "partial"))
+```
+
+
 
 
 ```{r}
@@ -58,18 +81,15 @@ system.time(
 ```
 
 
-```{r}
-recons.ar <- generateAR(ar.coefmat,
-                        innov.fun = rnorm, noise.sigma = 0.01)
+```r
+recons.ar <- generateAR(ar.coefmat, PATCHSIZE = 512,
+                        innov.fun = rnorm, noise.sigma = 0.0005)
 
-```
-
-```{r}
 outfile <- "generated-ar.coefmat.mp3"
 writeSignal(scaleSignal(recons.ar, qprob = 0.75), file = outfile, samp.rate = srate)
 ```
 
-```{r}
+```r
 #| output: asis
 writeAudioBlock(outfile)
 ```
@@ -83,23 +103,25 @@ to reproduce this if it is actually based on ACF.
 
 
 ```{r}
+#| label: get-ar-coefs
 getARCoef <- function(x, ..., taper = FALSE)
 {
     if (taper) x <- spec.taper(x, 0.5)
     ## ar(x, aic = FALSE, order.max = order, demean = FALSE, method = "burg")$ar
-    ar(x, aic = FALSE, ..., demean = FALSE, method = "burg")$ar
+    ar(x, aic = FALSE, ..., demean = FALSE, method = "yule")$ar
 }
 
 system.time(
-    ar.burgmat <- apply(m, 2, getARCoef, order.max = 300)
+    ar.burgmat <- apply(m, 2, getARCoef, order.max = 600)
 )
 
-recons.burg <- generateAR(ar.burgmat[,],
-                          innov.fun = rnorm, noise.sigma = 0.001)
+recons.burg <- generateAR(ar.burgmat[,], PATCHSIZE = 512,
+                          innov.fun = rnorm, noise.sigma = 0.005)
 
 ```
 
 ```{r}
+#| cache: false
 outfile <- "generated-ar.burgmat.mp3"
 writeSignal(scaleSignal(recons.burg, qprob = 0.9), file = outfile, samp.rate = srate)
 ```
@@ -109,17 +131,72 @@ writeSignal(scaleSignal(recons.burg, qprob = 0.9), file = outfile, samp.rate = s
 writeAudioBlock(outfile)
 ```
 
+* * *
+
+## AR from ACF using Levinson's algorithm 
+
+
+```{r}
+library(gsignal)
+arcmat <- t(levinson(acf.coefmat, p = 600)$a)[-1, ]
+```
+
+```{r}
+recons.levinson.ar <-
+    generateAR(arcmat[,], PATCHSIZE = 512,
+               innov.fun = rnorm, noise.sigma = 0.001)
+
+```
+
+
+
+
+## MA model from ACF
+
+Not sure if this is correct.
+
+
+
+```{r}
+macmat <- apply(m, 2, levinson.ma, p = 600)
+```
+
+
+
+```{r}
+recons.levinson.ma <-
+    generateMA(arcmat[,], PATCHSIZE = 512,
+               innov.fun = rnorm, noise.sigma = 0.005)
+
+```
+
+```{r}
+#| cache: false
+outfile <- "generated-ma.levinson.mp3"
+writeSignal(scaleSignal(recons.levinson.ma, qprob = 0.9), file = outfile, samp.rate = srate)
+```
+
+```{r}
+#| output: asis
+writeAudioBlock(outfile)
+```
+
+* * *
+
 
 ## MA model --- use ACF as coefficients
 
+
 ```{r}
-system.time(acf.mat800 <- apply(m, 2, getACF, lag.max = 800, type = "correlation"))
-recons.ma <- generateMA(acf.mat800, innov.fun = rnorm, noise.sigma = 0.01)
+#| label: gen-ma
+recons.ma <- generateMA(acf.coefmat, PATCHSIZE = 512,
+                        innov.fun = rnorm, noise.sigma = 0.005)
 ```
 
 not good, but retains essence + a lot of noise 
 
 ```{r}
+#| cache: false
 outfile <- "generated-ma.coefmat.mp3"
 writeSignal(scaleSignal(recons.ma, qprob = 0.9), file = outfile, samp.rate = srate)
 ```
@@ -129,6 +206,43 @@ writeSignal(scaleSignal(recons.ma, qprob = 0.9), file = outfile, samp.rate = sra
 writeAudioBlock(outfile)
 ```
 
+* * *
+
+
+## Try denoising this by smoothing
+
+```{r}
+filterLP <- function(x, lambda = 20)
+{
+    ## Possible alternative transformations
+    ## fftTrans <- transform.fft(delta = 4000, modulus.only = FALSE)
+    ## ridgeTrans <- transform.ridge(filter = c(1, -2, 1), lambda = 500)
+    ridgeTrans <- transform.ridge(filter = c(1, -1), lambda = 20)
+    m <- splitSignal(x, 10 * 1024, 512)
+    xx <- transformSignal(m, ridgeTrans, loop = FALSE) |> mergeSignal(overlap = 512)
+    ## FIXME: some problem in calculation; xx longer
+    L <- min(length(x), length(xx))
+    x <- x[1:L]
+    xx <- xx[1:L]
+    xx
+}
+```
+
+```{r}
+#| label: low-pass-filter
+x1 <- filterLP(recons.ma, lambda = 10)
+```
+
+
+```{r}
+outfile <- "ma-smoothed.mp3"
+writeSignal(scaleSignal(x1), file = outfile, samp.rate = srate)
+```
+
+```{r}
+#| output: asis
+writeAudioBlock(outfile)
+```
 
 
 

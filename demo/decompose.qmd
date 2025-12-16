@@ -2,7 +2,7 @@
 title: Successive high-pass decomposition by smoothing
 format: html
 execute:
-  cache: true
+  cache: false
 ---
 
 
@@ -21,7 +21,7 @@ filterLP <- function(x, lambda = 20)
     ## fftTrans <- transform.fft(delta = 4000, modulus.only = FALSE)
     ## ridgeTrans <- transform.ridge(filter = c(1, -2, 1), lambda = 500)
     ridgeTrans <- transform.ridge(filter = c(1, -1), lambda = 20)
-    m <- splitSignal(x, 1024, 512)
+    m <- splitSignal(x, 10 * 1024, 512)
     xx <- transformSignal(m, ridgeTrans, loop = FALSE) |> mergeSignal(overlap = 512)
     ## FIXME: some problem in calculation; xx longer
     L <- min(length(x), length(xx))
@@ -29,15 +29,18 @@ filterLP <- function(x, lambda = 20)
     xx <- xx[1:L]
     xx
 }
-LAMBDA <- 20
+LAMBDA <- 50
 ```
 
 
 ```{r}
-src <- "../samples/rabindranath-jhulan-1939.wav"
+## src <- "../samples/rabindranath-jhulan-1939.wav"
 ## "../samples/nayan_chhere_gele_chale.wav"
+src <- "~/audio-samples/rabindranath-birpurush.mp3"
+
 x <- read_audio_bin(src, channels = 1) |> scaleSignal()
 (srate <- attr(x, "sample_rate"))
+x <- x[10 * 44100 + seq_len(20 * 44100)]
 ```
 
 ## Original

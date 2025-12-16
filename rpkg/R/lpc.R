@@ -8,18 +8,19 @@
 generateAR <-
     function(arm, innov.fun = rnorm, ...,
              noise.sigma = 1,
+             PATCHSIZE = 1024,
              verbose = interactive())
         ## arm: matrix of AR coefficients
 {
     ORDER <- nrow(arm)
     ## matplot(asinh(arm)[1:10, ], type = "l", lty = 1, col = "#00000022")
-    N <- 1024 * (1 + ncol(arm))
+    N <- PATCHSIZE * (1 + ncol(arm))
     zz <- noise.sigma * innov.fun(N, ...)
     xx <- zz
     IND <- 1:ORDER
     for (i in 1025:(N-1))
     {
-        j <- i %/% 1024
+        j <- i %/% PATCHSIZE
         rho <- arm[, j]
         xx[i] <- sum(rho * xx[i - IND]) + zz[i]
         if (!is.finite(xx[i])) xx[i] <- 0
@@ -38,12 +39,13 @@ generateAR <-
 
 generateMA <-
     function(arm, innov.fun, ..., noise.sigma = 1,
+             PATCHSIZE = 1024,
              verbose = interactive())
     ## arm: matrix of MA coefficients (despite the name)
 {
     ORDER <- nrow(arm)
     ## matplot(asinh(arm)[1:10, ], type = "l", lty = 1, col = "#00000022")
-    N <- 1024 * (1 + ncol(arm))
+    N <- PATCHSIZE * (1 + ncol(arm))
     zz <- noise.sigma * innov.fun(N, ...)
     xx <- zz
     IND <- 1:ORDER
@@ -52,7 +54,7 @@ generateMA <-
         if (verbose && i %% 1000 == 0)
             cat(sprintf("\r %d%%: %g              ",
                         round(100 * i / (N-1)), xx[i]))
-        j <- i %/% 1024
+        j <- i %/% PATCHSIZE
         rho <- arm[, j]
         xx[i] <- sum(rho * zz[i - IND]) + zz[i]
     }
@@ -68,6 +70,8 @@ generateMA <-
 ## solves for AR coefficients given ACF, so we may need to write
 ## one. This basically involves solving a system of equations with a
 ## Toeplitz matrix. A crude solution is
+
+## UPDATE: See package gsignal::levinson
 
 acf2ar <- function(rho, lambda = 0)
     ## rho : rho_0, rho_1, ..., rho_(p-1), actually covariances
