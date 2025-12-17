@@ -32,15 +32,17 @@ getACF <- function(x, ...)
 {
     acf(x, ..., plot = FALSE, demean = FALSE)$acf[-1]
 }
+LAG_MAX <- 600
+NOISE_SIGMA <- 0.0001
 ```
 
 
 ## Original audio
 
 ```{r}
-## src <- "~/audio-samples/rabindranath-birpurush.mp3"
-src <- ## "../samples/rabindranath-jhulan-1921.wav"
-    "../samples/nayan_chhere_gele_chale.wav"
+src <- "~/audio-samples/rabindranath-birpurush.mp3"
+## src <- ## "../samples/rabindranath-jhulan-1921.wav"
+##     "../samples/nayan_chhere_gele_chale.wav"
 x <- read_audio_bin(src, channels = 1) |> scaleSignal()
 (srate <- attr(x, "sample_rate"))
 x <- head(x, srate * 60) |> tail(srate * 20) # 20 seconds
@@ -57,9 +59,9 @@ writeAudioBlock(outfile)
 ## ACF
 
 ```{r}
-m <- splitSignal(x, patch = 1024, overlap = 512) # 1024 # ~ 23 milliseconds
-system.time(acf.coefmat <- apply(m, 2, getACF, lag.max = 400, type = "correlation"))
-system.time(pacf.coefmat <- apply(m, 2, getACF, lag.max = 400, type = "partial"))
+m <- splitSignal(x, patch = 1024, overlap = 256 * 3) # 1024 # ~ 23 milliseconds
+system.time(acf.coefmat <- apply(m, 2, getACF, lag.max = LAG_MAX, type = "covariance"))
+system.time(pacf.coefmat <- apply(m, 2, getACF, lag.max = LAG_MAX, type = "partial"))
 ```
 
 
@@ -78,8 +80,8 @@ system.time(
 
 
 ```r
-recons.ar <- generateAR(ar.coefmat, PATCHSIZE = 512,
-                        innov.fun = rnorm, noise.sigma = 0.0005)
+recons.ar <- generateAR(ar.coefmat, PATCHSIZE = 256,
+                        innov.fun = rnorm, noise.sigma = NOISE_SIGMA)
 
 outfile <- "generated-ar.coefmat.mp3"
 writeSignal(scaleSignal(recons.ar, qprob = 0.75), file = outfile, samp.rate = srate)
@@ -100,19 +102,19 @@ to reproduce this if it is actually based on ACF.
 
 ```{r}
 #| label: get-ar-coefs
-getARCoef <- function(x, ..., taper = FALSE)
+getARCoef <- function(x, ..., taper = TRUE)
 {
     if (taper) x <- spec.taper(x, 0.5)
     ## ar(x, aic = FALSE, order.max = order, demean = FALSE, method = "burg")$ar
-    ar(x, aic = FALSE, ..., demean = FALSE, method = "yule")$ar
+    ar(x, aic = FALSE, ..., demean = FALSE, method = "burg")$ar
 }
 
 system.time(
-    ar.burgmat <- apply(m, 2, getARCoef, order.max = 400)
+    ar.burgmat <- apply(m, 2, getARCoef, order.max = LAG_MAX)
 )
 
-recons.burg <- generateAR(ar.burgmat[,], PATCHSIZE = 512,
-                          innov.fun = rnorm, noise.sigma = 0.005)
+recons.burg <- generateAR(ar.burgmat[,], PATCHSIZE = 256,
+                          innov.fun = rnorm, noise.sigma = NOISE_SIGMA)
 
 ```
 
@@ -137,18 +139,12 @@ Not stable, but may be worth pursuing as this seems standard.
 library(gsignal)
 arcmat <- t(levinson(acf.coefmat, p = 400)$a)[-1, ]
 recons.levinson.ar <-
-    generateAR(arcmat[,], PATCHSIZE = 512,
-               innov.fun = rnorm, noise.sigma = 0.001)
+    generateAR(arcmat[,], PATCHSIZE = 256,
+               innov.fun = rnorm, noise.sigma = NOISE_SIGMA)
 ```
 
 
-
-
-## MA model from ACF
-
 Not sure if this is correct. Maybe it's adapted from `signal::levinson`.
-
-
 
 ```{r}
 system.time(
@@ -161,8 +157,8 @@ But reconstruction explodes.
 
 ```{r}
 recons.levinson.ma <-
-    generateMA(macmat[,], PATCHSIZE = 512,
-               innov.fun = rnorm, noise.sigma = 0.005)
+    generateAR(macmat[,], PATCHSIZE = 256,
+               innov.fun = rnorm, noise.sigma = NOISE_SIGMA)
 
 ```
 
@@ -185,8 +181,8 @@ writeAudioBlock(outfile)
 
 ```{r}
 #| label: gen-ma
-recons.ma <- generateMA(acf.coefmat, PATCHSIZE = 512,
-                        innov.fun = rnorm, noise.sigma = 0.005)
+recons.ma <- generateMA(acf.coefmat, PATCHSIZE = 256,
+                        innov.fun = rnorm, noise.sigma = NOISE_SIGMA)
 ```
 
 not good, but retains essence + a lot of noise 
@@ -254,14 +250,15 @@ Not simple, but let's try this silly algorithm:
 * The defining relationship is
 
 $$
-\rho_k = \theta_k + \theta_1 \theta_{1+k} + \dotsm + \theta_{q-k} \theta_q
+\rho_k = \frac{ \theta_k + \theta_1 \theta_{1+k} + \dotsm + \theta_{q-k} \theta_q }{ 1 + \theta_1^2 + \dotsc + \theta_q^2 }
 $$
 
-* Using this, recursively update (for $k = 1, 2, \dotsc, q$)
+* Using this, recursively define $C(\theta) = 1 + \theta_1^2 + \dotsc + \theta_q^2$ and update (for $k = 1, 2, \dotsc, q$)
 
 $$
-\theta_k = \hat\rho_k - (\theta_1 \theta_{1+k} + \dotsm + \theta_{q-k} \theta_q)
+\theta_k = C(\theta) \hat\rho_k - (\theta_1 \theta_{1+k} + \dotsm + \theta_{q-k} \theta_q)
 $$
+
 
 
 ```{r}
@@ -270,7 +267,9 @@ sillyMA <- function(rho, q = length(rho), niter = 10)
     rho <- head(rho, q)
     theta <- rho
     updateTheta <- function() {
-        theta[] <<- rho - sapply(1:q, function(k) sum(head(theta, -k) * tail(theta, -k)))
+        theta[] <- theta / max(abs(theta))
+        C <- 1 + sum(theta^2)
+        theta[] <<- C * rho - sapply(1:q, function(k) sum(head(theta, -k) * tail(theta, -k)))
     }
     replicate(niter, updateTheta())
     theta
@@ -281,7 +280,7 @@ sillyMA <- function(rho, q = length(rho), niter = 10)
 ```{r}
 #| label: silly-ma
 system.time(
-    silly.macmat <- apply(acf.coefmat, 2, sillyMA, q = 400, niter = 3)
+    silly.macmat <- apply(acf.coefmat, 2, sillyMA, q = 500, niter = 2)
 )
 str(silly.macmat)
 ```
@@ -290,13 +289,15 @@ str(silly.macmat)
 
 ```{r}
 #| label: gen-ma-2
-recons.sillyma <- generateMA(silly.macmat, PATCHSIZE = 512, 
-                         innov.fun = rnorm, noise.sigma = 0.001)
+#| cache: false
+recons.sillyma <- generateMA(silly.macmat, PATCHSIZE = 256,  
+                             innov.fun = rnorm, noise.sigma = NOISE_SIGMA * 10)
 ```
 
 
 
 ```{r}
+#| cache: false
 outfile <- "ma-silly.mp3"
 writeSignal(scaleSignal(recons.sillyma), file = outfile,  samp.rate = srate)
 ```
@@ -309,7 +310,7 @@ writeAudioBlock(outfile)
 
 
 ```{r}
-matplot((silly.macmat), type = "l", lty = 1,  col = "#00000022")
+matplot((silly.macmat), type = "l", lty = 1, col = "#00000022")
 ```
 
 

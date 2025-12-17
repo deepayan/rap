@@ -25,7 +25,7 @@ generateAR <-
         xx[i] <- sum(rho * xx[i - IND]) + zz[i]
         if (!is.finite(xx[i])) xx[i] <- 0
         if (verbose && i %% 1000 == 0) {
-            cat(sprintf("\r %d%%: %g              ",
+            cat(sprintf("\r %04d%%: %g              ",
                         round(100 * i / (N-1)), xx[i]))
             if (!is.finite(xx[i])) ## stop("Terminating.")
                 xx[!is.finite(xx)] <- 0
@@ -35,7 +35,6 @@ generateAR <-
     xx[!is.finite(xx)] <- 0
     xx
 }
-
 
 generateMA <-
     function(arm, innov.fun, ..., noise.sigma = 1,
@@ -55,8 +54,8 @@ generateMA <-
             cat(sprintf("\r %d%%: %g              ",
                         round(100 * i / (N-1)), xx[i]))
         j <- i %/% PATCHSIZE
-        rho <- arm[, j]
-        xx[i] <- sum(rho * zz[i - IND]) + zz[i]
+        theta <- arm[, j]
+        xx[i] <- sum(theta * zz[i - IND]) + zz[i]
     }
     print(range(xx))
     xx[!is.finite(xx)] <- 0
