@@ -1,0 +1,125 @@
+---
+title: Converting frequencies to a waveform
+format: html
+execute:
+  cache: false
+---
+
+
+Suppose we have a sequence of frequencies with durations, as in a
+typical melody. Our goal is to convert this into a waveform. For now,
+we consider pure frequencies with constant amplitude.
+
+## Formulation and theoretical solution
+
+Converting a frequency $\omega$ to a waveform $w_{\omega}$ is
+trivial (but not unique):
+
+$$
+W_{\omega}(t) = \sin (2 \pi \omega t).
+$$
+
+The challenge is to make the waveform _continuous_ when the
+frequencies change.
+
+In music, frequencies are typically piecewise constant (especially for
+keyboard-style instruments), but can also vary continuously with time,
+especially for vocal music. We will assume that we are given a
+function $\omega(t)$ which tells us the frequency at time $t$. We are
+interested in evaluating a cooresponding _continuous_ waveform
+$W_{\omega}(t)$ such that locally we can write
+
+$$
+W_{\omega}(t) = \sin (2 \pi \omega(t) t + c).
+$$ {#eq-target}
+
+where the "constant" $c$ is an adjustment to make the function
+continuous, and depends on the history, changing whenever $\omega(t)$
+changes. We will propose the following form, which we can easily show
+will satisfy our requirements when $\omega(t)$ is locally constant:
+
+$$
+\widetilde{W}_{\omega}(t) = \sin (2 \pi s(t)), 
+$$
+
+where
+
+$$
+s(t) = \int\limits_{0}^{t} \omega(u) \text{d}u.
+$$
+
+$W_{\omega}(t)$ is continuous because $s(t)$ is continuous, and
+behaves like (-@eq-target) when $\omega(t)$ is locally constant.
+
+A more intuitive interpretation of this formulation is to think of
+$s(t)$ as a "warping" of $t$ so that $\sin (2 \pi s)$ is a sine curve
+with constant frequency 1.
+
+## Implementation challenges
+
+The values of $\omega(t)$ will be typically large, so there is a
+chance that $s(t)$ will overflow. But as $\sin$ is periodic with a
+period of 1, there is no difference between $s(t)$ and $s(t) \mod 1$.
+
+So in principle, given $\omega(t), 0 < t < T$ we can do a discrete
+approximation with sampling rate $R$ as follows:
+
+```r
+t <- seq(0, T, by = 1/R)
+w <- omega(t)
+s <- cumsum1(w / R)
+W <- sin(2 * pi * s)
+```
+
+where `cumsum1(x)` takes cumulative sums of a vector modulo 1. The
+only flaw in this approach (other than the numerical approximations
+involved in approximating an integral by cumulative sums) is that this
+is not vectorizable in the usual R sense. So we will use a compiled
+implementation.
+
+```{Rcpp}
+#include <Rcpp.h>
+
+// [[Rcpp::export]]
+Rcpp::NumericVector cumsum1(Rcpp::NumericVector x) {
+	int n = x.size();
+	Rcpp::NumericVector y(n); y[0] = x[0];
+    for (int i = 1; i < n; i++) y[i] = fmod(y[i-1] + x[i], 1.0);
+	return y;
+}
+```
+
+We will (eventually) implement `cumsum1` in C (using R's standard
+foreign function interface, as it's too simple to warrant `Rcpp`).
+
+```{r}
+cumsum1(runif(100, max = 0.25)) |> plot(type = "o")
+```
+
+
+## Piecewise linear and constant $\omega(t)$
+
+In practice, we will probably only deal with $\omega(t)$ that is
+piecewise constant or linear. In such cases, the integrals canbe
+computed more precisely ($s(t)$ is piecewise linear or
+quadratic). However, we will leave this for later.
+
+
+## Data
+
+Should ideally come as a data frame with columns giving (a) transition
+times, (b) freqencies, (c) transition type (discrete/continuous), and
+(d) whether new note or continuation of previous note.
+
+(d) will impact the amplitude profile (which we will think about
+later).
+
+Let's try a simple example.
+
+
+
+```{r}
+library(av)
+library(rap)
+```
+
