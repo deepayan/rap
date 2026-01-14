@@ -40,12 +40,12 @@ NOISE_SIGMA <- 0.0001
 ## Original audio
 
 ```{r}
-src <- "~/audio-samples/rabindranath-birpurush.mp3"
-## src <- ## "../samples/rabindranath-jhulan-1921.wav"
-##     "../samples/nayan_chhere_gele_chale.wav"
+## src <- "~/audio-samples/rabindranath-birpurush.mp3"
+src <- ## "../samples/rabindranath-jhulan-1921.wav"
+    "../samples/nayan_chhere_gele_chale.wav"
 x <- read_audio_bin(src, channels = 1) |> scaleSignal()
 (srate <- attr(x, "sample_rate"))
-x <- head(x, srate * 60) |> tail(srate * 20) # 20 seconds
+x <- head(x, srate * 120) |> tail(srate * 20) # 20 seconds
 outfile <- "original-audio.mp3"
 writeSignal(scaleSignal(x), file = outfile, samp.rate = srate)
 ```
@@ -60,7 +60,7 @@ writeAudioBlock(outfile)
 
 ```{r}
 m <- splitSignal(x, patch = 1024, overlap = 256 * 3) # 1024 # ~ 23 milliseconds
-system.time(acf.coefmat <- apply(m, 2, getACF, lag.max = LAG_MAX, type = "covariance"))
+system.time(acf.coefmat <- apply(m, 2, getACF, lag.max = LAG_MAX, type = "correlation"))
 system.time(pacf.coefmat <- apply(m, 2, getACF, lag.max = LAG_MAX, type = "partial"))
 ```
 

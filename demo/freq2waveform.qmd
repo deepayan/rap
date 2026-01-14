@@ -2,7 +2,7 @@
 title: Converting frequencies to a waveform
 format: html
 execute:
-  cache: false
+  cache: true
 ---
 
 
@@ -108,8 +108,10 @@ quadratic). However, we will leave this for later.
 ## Data
 
 Should ideally come as a data frame with columns giving (a) transition
-times, (b) freqencies, (c) transition type (discrete/continuous), and
-(d) whether new note or continuation of previous note.
+times starting from 0, (b) frequencies at the beginning of each
+interval (last one is unused), (c) transition type
+(discrete/continuous), and (d) whether new note or continuation of
+previous note.
 
 (d) will impact the amplitude profile (which we will think about
 later).
@@ -117,9 +119,47 @@ later).
 Let's try a simple example.
 
 
-
 ```{r}
 library(av)
 library(rap)
 ```
 
+Simulate some data:
+
+```{r}
+NOTES <- 440 * 2^(c(0, 2, 4, 5, 7, 9, 11, 12) / 12) # 440=A
+BPS <- 4
+n <- 20
+music <- data.frame(time = seq(0, n/BPS, length.out = n),
+                    freq = sample(NOTES, n, replace = TRUE),
+                    transition = 0, # 0 = discrete, 1 = continuous
+                    newnote = TRUE)
+```
+
+Let's first define $\omega(t)$. In this case the function is piecewise
+constant, so we can simply use `stepfun()`.
+
+```{r}
+omega <- with(music, stepfun(time, c(0, freq)))
+plot(omega)
+```
+
+Next, let us generate the waveform using the algorithm above.
+
+```{r}
+R <- 44100
+t <- seq(0, n/BPS, by = 1/R)
+w <- omega(t)
+s <- cumsum1(w / R)
+W <- sin(2 * pi * s)
+```
+
+```{r}
+outfile <- "random-music.mp3"
+writeSignal(scaleSignal(W, qprob = 1), file = outfile, samp.rate = R)
+```
+
+```{r}
+#| output: asis
+writeAudioBlock(outfile)
+```
