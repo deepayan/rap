@@ -136,8 +136,12 @@ music <- data.frame(time = seq(0, n/BPS, length.out = n),
                     newnote = TRUE)
 ```
 
-Let's first define $\omega(t)$. In this case the function is piecewise
-constant, so we can simply use `stepfun()`.
+
+## Piecewise constant
+
+Let's first define $\omega(t)$. For our first attempt, we will take
+$\omega(t)$ to be piecewise constant, so we can simply use
+`stepfun()`.
 
 ```{r}
 omega <- with(music, stepfun(time, c(0, freq)))
@@ -163,3 +167,102 @@ writeSignal(scaleSignal(W, qprob = 1), file = outfile, samp.rate = R)
 #| output: asis
 writeAudioBlock(outfile)
 ```
+
+
+## Piecewise linear
+
+The more general form which should cover most use cases is a piecewise
+linear $\omega(t)$. For this we will represent the function in terms
+of contiguous intervals, with interval having a start and end time, as
+well as a start and end frequency. This is sort of like the MIDI
+model, except that we have no overlapping intervals and no silent
+intervals.
+
+
+Let's simulate music as before (but as a random walk), but this time
+with each row giving an interval.
+
+```{r}
+NOTES <- 440 * 2^(c(0, 2, 4, 5, 7, 9, 11, 12) / 12) # 440=A
+n <- 50
+BPS <- 2
+tt <- seq(0, n/BPS, length.out = n + 1)
+note_seq <- sample(c(-1, 0, 1), n + 1, replace = TRUE) |> cumsum()
+note_seq <- 1 + (note_seq %% 8)
+note_seq[[1]] <- 1
+music <- data.frame(tstart = head(tt, -1), tend = tail(tt, -1),
+                    fstart = NOTES[head(note_seq, -1)],
+                    fend = NOTES[tail(note_seq, -1)],
+                    newnote = sample(c(TRUE, FALSE), n, replace = TRUE))
+```
+
+Instead of writing a function (which we could if we really wanted),
+let's just directly generate the pointwise evaluation.
+
+
+```{r}
+music2freq <- function(d, R = 44100) {
+    n <- nrow(d)
+    T <- d$tend[[n]] # end-time
+    t <- seq(0, T, by = 1/R)
+    ## find the starting index of each interval --- basically the
+    ## first index which falls in that interval, but calculated
+    ## efficiently.
+    ##
+    ## Start with something crude... FIXME improve
+    kstart <- as.integer(length(t) * (d$tstart / T))
+    kstart[[1]] <- 1
+    kend <- c(kstart[-1], length(t))
+    ans <- numeric(length(t))
+    for (i in seq_len(n)) {
+        ## print(i)
+        L <- kend[i] - kstart[i] + 1
+        ans[ kstart[i]:kend[i] ] <- d$fstart[i] +
+            seq(0, 1, length.out = L) * (d$fstart[i] - d$fend[i])
+    }
+    ans
+}
+```
+
+
+
+```{r}
+R <- 44100
+t <- seq(0, n/BPS, by = 1/R)
+w <- music2freq(music, R) 
+s <- cumsum1(w / R)
+W <- sin(2 * pi * s)
+```
+
+
+```{r}
+outfile <- "random-music-linear.mp3"
+writeSignal(scaleSignal(W, qprob = 1), file = outfile, samp.rate = R)
+```
+
+```{r}
+#| output: asis
+writeAudioBlock(outfile)
+```
+
+So this seems to successfully demonstrate that we can vary frequency
+continuously. What we still cannot handle is transitioning into
+silence --- which is easy in principle; we just need to continue until
+the waveform reaches zero before stopping. Or we can fake that using
+volume (when we implement it eventually).
+
+## Real music
+
+For melodies (without any harmony) we should be able to proceed if
+someone gives us a data frame in the format above. The most obvious
+thing to try is Rabindrasangeet because the notation is [already
+available](https://github.com/majantali/gitabitan). 
+
+We could go via MIDI, but that is event-based (each note is a separate
+event, not a continuation), so conceptually there is no guarantee that
+there is exactly one frequency to play at every time point. So we will
+instead try generating the data frame directly.
+
+TODO
+
+
