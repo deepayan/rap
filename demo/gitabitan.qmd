@@ -1,0 +1,163 @@
+---
+title: Converting swarabitan notation to waveforms
+format: html
+execute:
+  cache: true
+---
+
+See [background](freq2waveform.html) first.
+
+
+```{Rcpp}
+#include <Rcpp.h>
+
+// [[Rcpp::export]]
+Rcpp::NumericVector cumsum1(Rcpp::NumericVector x) {
+	int n = x.size();
+	Rcpp::NumericVector y(n); y[0] = x[0];
+    for (int i = 1; i < n; i++) y[i] = fmod(y[i-1] + x[i], 1.0);
+	return y;
+}
+```
+
+```{r}
+library(av)
+library(rap)
+```
+
+```{r}
+music2freq <- function(d, R = 44100) {
+    ## just in case we have any tend < tstart, just drop those rows
+    ## after warning
+    if (any(d$tend <= d$tstart)) {
+        warning("Check input: found tend <= tstart")
+        d <- subset(d, tend > tstart)
+    }
+
+    ## just in case we have non-increasing tstart:
+    if (any(dds <- (diff(d$tstart) < 0))) {
+        warning("Check input: found diff(tstart) < 0")
+        d <- d[-(1L + which(dds)), ]
+    }
+    
+    n <- nrow(d)
+    T <- d$tend[[n]] # end-time
+    t <- seq(0, T, by = 1/R)
+
+    ## find the starting index of each interval --- basically the
+    ## first index which falls in that interval, but calculated
+    ## efficiently.
+    ##
+    ## Start with something crude... FIXME improve
+    kstart <- as.integer(length(t) * (d$tstart / T))
+    kstart[[1]] <- 1
+    kend <- c(kstart[-1], length(t))
+    ans <- numeric(length(t))
+    for (i in seq_len(n)) {
+        ## print(i)
+        L <- kend[i] - kstart[i] + 1
+        if (L < 1) stop("kend - kstart < 0: ", L,
+                        " at row ", i,
+                        " (tstart, tend) = (", d$tstart[i], " ", d$tend[i], ")")
+        ans[ kstart[i]:kend[i] ] <- d$fstart[i] +
+            seq(0, 1, length.out = L) * (d$fend[i] - d$fstart[i])
+    }
+    ans
+}
+```
+
+
+
+## Swarabitan
+
+For melodies (without any harmony) we should be able to proceed if
+someone gives us a data frame in the required format. The most obvious
+thing to try is Rabindrasangeet because the notation is [already
+available](https://github.com/majantali/gitabitan) and can be
+processed using [this
+code](https://github.com/majantali/gitabitan/blob/main/generate-freq-csv.R).
+
+
+
+
+```{r}
+notation2mp3 <- function(id, AFREQ = 440, L = 0.4, D = 0.25 * L, lowvol = 0.6)
+{
+    infile <- sprintf("~/git/github-majantali/gitabitan/frequency-duration/%s.csv", id)
+    outfile <- sprintf("./gitabitan/%s.mp3", id)
+    freqs <- read.csv(infile)
+    ## convert to frequency: Take A=57 as 440Hz (or AFREQ in general)
+    ## convert time to seconds: Take duration=60 as L seconds
+    
+    freqs <- within(freqs,
+    {
+        tmin <- min(tstart)
+        tstart <- L * (tstart - tmin) / 60
+        tend <- L * (tend - tmin) / 60
+        fstart <- AFREQ * 2^((kstart - 57) / 12)
+        fend <- AFREQ * 2^((kend - 57) / 12)
+    })[c("tstart", "tend", "fstart", "fend", "newnote")]
+    total.duration <- max(freqs$tend)
+    R <- 44100
+    t <- seq(0, total.duration, by = 1/R)
+    w <- music2freq(freqs, R)
+    s <- cumsum1(w / R)
+    W <- sin(2 * pi * s)
+
+    ## Next add volume modulation. General volume will be 'lowvol'. For
+    ## every newnote, we will start volume at 1 and bring it down to
+    ## 'lowvol' in 'D' seconds
+    V <- rep(lowvol, length(t))
+    Tnew <- freqs$tstart[freqs$newnote == 1]
+    ## convert these to index in (sampled) t
+    inew <- as.integer(length(t) * (Tnew / total.duration))
+    inew <- inew[inew < R * total.duration - L * R]
+    vdesc <- seq(1, 0, length.out = round(D * R))^2
+    vdesc[] <- lowvol + (1-lowvol) * vdesc 
+    idesc <- seq_along(vdesc)
+    for (i in inew) {
+        V[i + idesc] <- vdesc
+    }
+    writeSignal(0.99 * W * V, file = outfile, samp.rate = R)
+}
+```
+
+## আনন্দলোকে মঙ্গলালোকে
+
+```{r}
+#| output: asis
+writeAudioBlock(notation2mp3("00032", AFREQ = 220, L = 0.35, lowvol = 0.6))
+```
+
+## এ মোহ-আবরণ খুলে দাও
+
+```{r}
+#| output: asis
+writeAudioBlock(notation2mp3("01177", AFREQ = 220, L = 0.75))
+```
+
+## জাগরণে যায় বিভাবরী
+
+```{r}
+#| output: asis
+writeAudioBlock(notation2mp3("01071", AFREQ = 220, L = 0.4))
+```
+
+
+## আমার প্রাণের' পরে চলে গেল কে
+
+```{r}
+#| output: asis
+writeAudioBlock(notation2mp3("00901", AFREQ = 220, L = 0.4))
+```
+
+## আমি চঞ্চল হে
+
+```{r}
+#| output: asis
+writeAudioBlock(notation2mp3("01436", AFREQ = 220, L = 0.4))
+```
+
+
+
+

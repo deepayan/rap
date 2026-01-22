@@ -194,6 +194,7 @@ music <- data.frame(tstart = head(tt, -1), tend = tail(tt, -1),
                     fstart = NOTES[head(note_seq, -1)],
                     fend = NOTES[tail(note_seq, -1)],
                     newnote = sample(c(TRUE, FALSE), n, replace = TRUE))
+head(music)
 ```
 
 Instead of writing a function (which we could if we really wanted),
@@ -261,8 +262,49 @@ available](https://github.com/majantali/gitabitan).
 We could go via MIDI, but that is event-based (each note is a separate
 event, not a continuation), so conceptually there is no guarantee that
 there is exactly one frequency to play at every time point. So we will
-instead try generating the data frame directly.
+instead try generating the data frame directly --- see
+[here](https://github.com/majantali/gitabitan/blob/main/generate-freq-csv.R). The
+following examples use output from this code.
 
-TODO
+
+```{r}
+id <- "00032"
+id = "01177"
+id = "01071"
+infile <- sprintf("~/git/github-majantali/gitabitan/frequency-duration/%s.csv", id)
+freqs <- read.csv(infile)
+## convert to frequency: Take A=57 as 440Hz
+## convert time to seconds: Take duration=60 as L seconds
+L <- 0.25
+freqs <- within(freqs,
+{
+    tmin <- min(tstart)
+    tstart <- L * (tstart - tmin) / 60
+    tend <- L * (tend - tmin) / 60
+    fstart <- 440 * 2^((kstart - 57) / 12)
+    fend <- 440 * 2^((kend - 57) / 12)
+})[c("tstart", "tend", "fstart", "fend", "newnote")]
+head(freqs)
+
+total.duration <- max(freqs$tend)
+R <- 44100
+t <- seq(0, total.duration, by = 1/R)
+w <- music2freq(freqs, R)
+s <- cumsum1(w / R)
+W <- sin(2 * pi * s)
+```
+
+```{r}
+outfile <- sprintf("./gitabitan/%s.mp3", id)
+writeSignal(scaleSignal(W, qprob = 1), file = outfile, samp.rate = R)
+```
+
+```{r}
+#| output: asis
+writeAudioBlock(outfile)
+```
+
+
+
 
 
