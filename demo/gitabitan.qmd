@@ -81,7 +81,8 @@ code](https://github.com/majantali/gitabitan/blob/main/generate-freq-csv.R).
 
 
 ```{r}
-notation2mp3 <- function(id, AFREQ = 440, L = 0.4, D = 0.25 * L, lowvol = 0.6)
+notation2mp3 <- function(id, AFREQ = 440, L = 0.4, double = TRUE,
+                         D = 0.25 * L, A = 0.1 * D, lowvol = 0.8)
 {
     infile <- sprintf("~/git/github-majantali/gitabitan/frequency-duration/%s.csv", id)
     outfile <- sprintf("./gitabitan/%s.mp3", id)
@@ -97,6 +98,34 @@ notation2mp3 <- function(id, AFREQ = 440, L = 0.4, D = 0.25 * L, lowvol = 0.6)
         fstart <- AFREQ * 2^((kstart - 57) / 12)
         fend <- AFREQ * 2^((kend - 57) / 12)
     })[c("tstart", "tend", "fstart", "fend", "newnote")]
+
+    ## one practical problem is that discrete jumps in frequencies
+    ## always sound like a new note, regardless of of volume
+    ## profile. We can try to handle this as follows: for discrete
+    ## jumps that not new notes (slur), make the change continuous
+    ## over a small time interval in the past (for now, same as volume
+    ## ascent time A used below).
+
+    ## To do this, we need to insert a new linear segment before each
+    ## row i with newnote==0, with tstart = tstart[i] - A, tend =
+    ## tstart[i], fstart = fend[i-1], fend = fstart[i], newnote =
+    ## 0. We also need to shorten the duration of the _previous_ row
+    ## by amount A.
+
+    ## It is difficult to insert rows efficiently, so instead we will
+    ## form the rows and then combine and sort by starting time
+
+    islur <- which(freqs$newnote == 0)
+    newSegments <-
+        with(freqs,
+             data.frame(tstart = tstart[islur] - 3 * A,
+                        tend = tstart[islur],
+                        fstart = fend[islur-1],
+                        fend = fstart[islur],
+                        newnote = 0))
+    freqs$tend[islur-1] <- freqs$tend[islur-1] - 3 * A
+    freqs <- rbind(freqs, newSegments) |> sort_by(~ tstart)
+
     total.duration <- max(freqs$tend)
     R <- 44100
     t <- seq(0, total.duration, by = 1/R)
@@ -104,20 +133,52 @@ notation2mp3 <- function(id, AFREQ = 440, L = 0.4, D = 0.25 * L, lowvol = 0.6)
     s <- cumsum1(w / R)
     W <- sin(2 * pi * s)
 
-    ## Next add volume modulation. General volume will be 'lowvol'. For
-    ## every newnote, we will start volume at 1 and bring it down to
-    ## 'lowvol' in 'D' seconds
+    if (double) {
+        ## overlay another waveform at twice the frequncy 
+        freqs2 <- within(freqs, {
+            fstart <- 2 * fstart
+            fend <- 2 * fend
+        })
+        freqs3 <- within(freqs, {
+            fstart <- 3 * fstart
+            fend <- 3 * fend
+        })
+        w2 <- music2freq(freqs2, R)
+        s2 <- cumsum1(w2 / R)
+        W2 <- sin(2 * pi * s)
+        w3 <- music2freq(freqs3, R)
+        s3 <- cumsum1(w3 / R)
+        W3 <- sin(2 * pi * s)
+        W[] <- W + 0.5 * W2 + 1.5 * W3
+    }
+
+    W[] <- W / max(abs(W))
+    
+    ## Next add volume modulation using A (ascent) an D
+    ## (descent). General volume will be 'lowvol'. For every newnote,
+    ## we will start volume at 1 and bring it down to 'lowvol' in 'D'
+    ## seconds. But we also need to increase the volume to 1 smoothly
+    ## to avoid discontinuities. This will happen over 'A' seconds.
     V <- rep(lowvol, length(t))
     Tnew <- freqs$tstart[freqs$newnote == 1]
     ## convert these to index in (sampled) t
     inew <- as.integer(length(t) * (Tnew / total.duration))
     inew <- inew[inew < R * total.duration - L * R]
+
     vdesc <- seq(1, 0, length.out = round(D * R))^2
     vdesc[] <- lowvol + (1-lowvol) * vdesc 
     idesc <- seq_along(vdesc)
     for (i in inew) {
         V[i + idesc] <- vdesc
     }
+
+    vasc <- seq(1, 0, length.out = round(A * R))^2
+    vasc[] <- lowvol + (1-lowvol) * vasc 
+    iasc <- seq_along(vasc)
+    for (i in inew[-1]) {
+        V[i - iasc + 1L] <- vasc
+    }
+
     writeSignal(0.99 * W * V, file = outfile, samp.rate = R)
 }
 ```
@@ -158,6 +219,33 @@ writeAudioBlock(notation2mp3("00901", AFREQ = 220, L = 0.4))
 writeAudioBlock(notation2mp3("01436", AFREQ = 220, L = 0.4))
 ```
 
+## কৃষ্ণকলি আমি তারেই বলি
+
+```{r}
+#| output: asis
+writeAudioBlock(notation2mp3("01446", AFREQ = 220, L = 0.3))
+```
+
+## মাঝে মাঝে তব দেখা পাই (কীর্তন)
+
+```{r}
+#| output: asis
+writeAudioBlock(notation2mp3("01601", AFREQ = 220, L = 0.5))
+```
+
+## মাঝে মাঝে তব দেখা পাই
+
+```{r}
+#| output: asis
+writeAudioBlock(notation2mp3("01003", AFREQ = 220, L = 0.4))
+```
+
+## মেঘের পরে মেঘ জমেছে
+
+```{r}
+#| output: asis
+writeAudioBlock(notation2mp3("00388", AFREQ = 220, L = 0.5))
+```
 
 
 
