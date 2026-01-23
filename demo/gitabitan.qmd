@@ -81,7 +81,13 @@ code](https://github.com/majantali/gitabitan/blob/main/generate-freq-csv.R).
 
 
 ```{r}
-notation2mp3 <- function(id, AFREQ = 440, L = 0.4, double = TRUE,
+power_trans <- function(x, p = 1)
+{
+    ## x should be between -1 and 1; not being checked
+    sign(x) * abs(x)^p
+}
+
+notation2mp3 <- function(id, AFREQ = 440, L = 0.4, overtones = TRUE,
                          D = 0.25 * L, A = 0.1 * D, lowvol = 0.8)
 {
     infile <- sprintf("~/git/github-majantali/gitabitan/frequency-duration/%s.csv", id)
@@ -131,10 +137,10 @@ notation2mp3 <- function(id, AFREQ = 440, L = 0.4, double = TRUE,
     t <- seq(0, total.duration, by = 1/R)
     w <- music2freq(freqs, R)
     s <- cumsum1(w / R)
-    W <- sin(2 * pi * s)
+    W <- sin(2 * pi * s) |> power_trans(0.1)
 
-    if (double) {
-        ## overlay another waveform at twice the frequncy 
+    if (overtones) {
+        ## add overtones at twice + thrice the frequncy 
         freqs2 <- within(freqs, {
             fstart <- 2 * fstart
             fend <- 2 * fend
@@ -145,11 +151,11 @@ notation2mp3 <- function(id, AFREQ = 440, L = 0.4, double = TRUE,
         })
         w2 <- music2freq(freqs2, R)
         s2 <- cumsum1(w2 / R)
-        W2 <- sin(2 * pi * s)
+        W2 <- sin(2 * pi * s) |> power_trans(0.2)
         w3 <- music2freq(freqs3, R)
         s3 <- cumsum1(w3 / R)
-        W3 <- sin(2 * pi * s)
-        W[] <- W + 0.5 * W2 + 1.5 * W3
+        W3 <- sin(2 * pi * s) |> power_trans(0.5)
+        W[] <- W + 0.5 * W2 + 0.25 * W3
     }
 
     W[] <- W / max(abs(W))
@@ -179,7 +185,7 @@ notation2mp3 <- function(id, AFREQ = 440, L = 0.4, double = TRUE,
         V[i - iasc + 1L] <- vasc
     }
 
-    writeSignal(0.99 * W * V, file = outfile, samp.rate = R)
+    writeSignal(scaleSignal(W * V, qprob = 0.975), file = outfile, samp.rate = R)
 }
 ```
 
